@@ -303,6 +303,10 @@ const ViewSettings = (function () {
           const raw = client.data[c.key];
           if (c.role === "phone") out[c.label] = Utils.formatPhone(raw);
           else if (c.role === "renewal_check") out[c.label] = Utils.parseRenewalCheck(raw).display;
+          // A date column may be stored as a raw Excel serial number
+          // (xlsx import never converts it) — write it back out formatted,
+          // or the downloaded file shows "46266" instead of "01.09.2026".
+          else if (c.role === "date") out[c.label] = Utils.formatDate(raw);
           else out[c.label] = raw;
         });
         out["Статус"] = status.label;

@@ -37,6 +37,7 @@ const ViewMapping = (function () {
     });
     renderColumns();
     refreshSelectOptions();
+    renderColorHint();
   }
 
   function refreshSelectOptions() {
@@ -87,6 +88,7 @@ const ViewMapping = (function () {
         col.role = role.id;
         stripEl.querySelectorAll(".role-pill").forEach((p) => p.classList.remove("active"));
         pill.classList.add("active");
+        renderColorHint();
       });
       stripEl.appendChild(pill);
     });
@@ -209,6 +211,60 @@ const ViewMapping = (function () {
     el.appendChild(continueBtn);
   }
 
+  /** Catches the exact mistake that silently breaks the colour import: the
+   * results column not being marked with the "renewal_result" role (auto-
+   * guessing only fires for headers that literally say "результаты
+   * пролонгации" — a differently-named column, e.g. "Итог звонка", is left
+   * on whatever role it guessed and the colours are never read). Scans a
+   * sample of cells per column for a fill colour and, if a clearly-coloured
+   * column exists but nothing is marked renewal_result yet, offers a
+   * one-click fix. */
+  function renderColorHint() {
+    const hintEl = document.getElementById("mapping-color-hint");
+    if (!importRows || !sheetMeta) {
+      hintEl.hidden = true;
+      return;
+    }
+    const alreadyMarked = rowsState.some((c) => c.role === "renewal_result" && c.visible !== false);
+    if (alreadyMarked) {
+      hintEl.hidden = true;
+      return;
+    }
+    const sampleSize = Math.min(importRows.length, 300);
+    const candidates = rowsState.filter((col) => {
+      const colLetter = sheetMeta.headerColLetters[col.key];
+      if (!colLetter || !sampleSize) return false;
+      let colored = 0;
+      for (let i = 0; i < sampleSize; i++) {
+        if (ImportExport.getCellInfo(sheetMeta.sheet, colLetter, sheetMeta.rowRefs[i]).hex) colored++;
+      }
+      return colored / sampleSize >= 0.2;
+    });
+    if (!candidates.length) {
+      hintEl.hidden = true;
+      return;
+    }
+    hintEl.hidden = false;
+    hintEl.innerHTML = "";
+    const text = document.createElement("span");
+    text.textContent =
+      (candidates.length === 1 ? `В столбце «${candidates[0].label}» много закрашенных ячеек` : "В нескольких столбцах много закрашенных ячеек") +
+      " — если это результаты пролонгации (цвет + комментарий по клиенту), отметьте роль, чтобы при импорте по ним автоматически создалась история звонков:";
+    hintEl.appendChild(text);
+    candidates.forEach((col) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn small";
+      btn.textContent = `Отметить «${col.label}»`;
+      btn.addEventListener("click", () => {
+        col.role = "renewal_result";
+        renderColumns();
+        renderColorHint();
+      });
+      hintEl.appendChild(btn);
+    });
+  }
+
   function renderDuplicateWarning(duplicateInfo) {
     const el = document.getElementById("mapping-duplicate-warning");
     if (!duplicateInfo) {
@@ -231,6 +287,7 @@ const ViewMapping = (function () {
     const colorReviewEl = document.getElementById("mapping-color-review");
     colorReviewEl.hidden = true;
     colorReviewEl.innerHTML = "";
+    document.getElementById("mapping-color-hint").hidden = true;
 
     const suggested = importRows ? Schema.findBestTemplate(templates, headers) : null;
     rowsState = buildInitialMapping(headers, existingMapping);
@@ -239,6 +296,7 @@ const ViewMapping = (function () {
     renderTemplateSelect();
     document.getElementById("mapping-template-select").value = suggested ? suggested.id : "";
     renderColumns();
+    renderColorHint();
     renderDuplicateWarning(duplicateInfo);
 
     const importBtn = document.getElementById("mapping-import-btn");

@@ -24,6 +24,27 @@ const RenewalColors = (function () {
     { family: "yellow", label: "Жёлтый", meaning: "Ещё не звонил — запись о звонке не создаётся", statusId: null },
   ];
 
+  // Excel's "Standard Colors" swatch row (the 10 fixed colours under the
+  // fill-colour picker, same in every version/locale) — these are what most
+  // hand-colour-coded trackers actually use, so match them exactly instead
+  // of leaving it to the hue-band guess below. That guess alone put the
+  // standard Orange (FFC000, hue 45.2°) one degree over the yellow
+  // threshold, and the standard Dark Red (C00000, lightness 37.6%) just
+  // above the maroon-lightness cutoff — both real swatches, both
+  // misclassified.
+  const STANDARD_EXCEL_COLORS = {
+    C00000: "maroon", // Dark Red
+    FF0000: "red", // Red
+    FFC000: "orange", // Orange
+    FFFF00: "yellow", // Yellow
+    "92D050": "green", // Light Green
+    "00B050": "green", // Green
+    "00B0F0": "blue", // Light Blue
+    "0070C0": "blue", // Blue
+    "002060": "blue", // Dark Blue
+    "7030A0": "purple", // Purple
+  };
+
   function hexToHsl(hex) {
     const r = parseInt(hex.slice(0, 2), 16) / 255;
     const g = parseInt(hex.slice(2, 4), 16) / 255;
@@ -50,6 +71,8 @@ const RenewalColors = (function () {
    * confidently; those go through the hex-legend review instead. */
   function classifyColorFamily(hex) {
     if (!hex || !/^[0-9A-Fa-f]{6}$/.test(hex)) return null;
+    const upper = hex.toUpperCase();
+    if (upper in STANDARD_EXCEL_COLORS) return STANDARD_EXCEL_COLORS[upper];
     const { h, s, l } = hexToHsl(hex);
     if (s < 12 || l > 93 || l < 10) return null;
     if (l < 32 && (h < 20 || h >= 345)) return "maroon";

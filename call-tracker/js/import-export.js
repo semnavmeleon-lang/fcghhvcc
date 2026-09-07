@@ -80,10 +80,24 @@ const ImportExport = (function () {
     return table.filter((r) => r.some((cell) => cell.trim() !== ""));
   }
 
+  /** Real corporate exports routinely repeat a column name (e.g. two
+   * "Комментарий" columns — one per call attempt). Since every header is
+   * used as the row-object key and the mapping's column key, a repeat would
+   * otherwise silently clobber the earlier column's data on every row and
+   * make the two impossible to map separately — so make each one unique. */
+  function dedupeHeaders(headers) {
+    const seen = new Map();
+    return headers.map((h) => {
+      const count = (seen.get(h) || 0) + 1;
+      seen.set(h, count);
+      return count === 1 ? h : `${h} (${count})`;
+    });
+  }
+
   function csvToHeadersRows(text) {
     const table = parseCsvTable(text, detectDelimiter(text));
     if (!table.length) return { headers: [], rows: [] };
-    const headers = table[0].map((h, i) => (h.trim() === "" ? `Столбец ${i + 1}` : h.trim()));
+    const headers = dedupeHeaders(table[0].map((h, i) => (h.trim() === "" ? `Столбец ${i + 1}` : h.trim())));
     const rows = table.slice(1).map((r) => {
       const obj = {};
       headers.forEach((h, i) => {
@@ -125,12 +139,16 @@ const ImportExport = (function () {
     const range = XLSX.utils.decode_range(ref);
     const headers = [];
     const headerColLetters = {};
+    const rawHeaders = [];
     for (let c = range.s.c; c <= range.e.c; c++) {
       const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c })];
-      const h = cell && cell.v !== undefined && cell.v !== "" ? String(cell.v) : `Столбец ${c - range.s.c + 1}`;
-      headers.push(h);
-      if (!(h in headerColLetters)) headerColLetters[h] = XLSX.utils.encode_col(c);
+      rawHeaders.push(cell && cell.v !== undefined && cell.v !== "" ? String(cell.v) : `Столбец ${c - range.s.c + 1}`);
     }
+    const dedupedHeaders = dedupeHeaders(rawHeaders);
+    dedupedHeaders.forEach((h, i) => {
+      headers.push(h);
+      headerColLetters[h] = XLSX.utils.encode_col(range.s.c + i);
+    });
     const rows = [];
     const rowRefs = [];
     for (let r = range.s.r + 1; r <= range.e.r; r++) {
@@ -139,7 +157,12 @@ const ImportExport = (function () {
       for (let c = range.s.c; c <= range.e.c; c++) {
         const cell = sheet[XLSX.utils.encode_cell({ r, c })];
         const v = cell && cell.v !== undefined ? cell.v : "";
-        if (v !== "") hasValue = true;
+        // A colour-only cell (filled in but never typed into — an agent
+        // marking a result by colour alone, no note yet) still counts as
+        // "this row has something in it", or the whole row — and the
+        // colour that's the entire point of RenewalColors — gets dropped
+        // here as "blank" before renewal-results processing ever sees it.
+        if (v !== "" || cellFillHex(cell)) hasValue = true;
         rowObj[headers[c - range.s.c]] = v;
       }
       if (!hasValue) continue; // mirrors the old sheet_to_json({ blankrows: false }) behavior
@@ -153,6 +176,11 @@ const ImportExport = (function () {
     return { headers, rows, rowRefs, headerColLetters };
   }
 
+  function cellFillHex(cell) {
+    const fill = cell && cell.s && (cell.s.fgColor || cell.s.bgColor);
+    return fill && fill.rgb && /^[0-9A-Fa-f]{6,8}$/.test(fill.rgb) ? fill.rgb.slice(-6).toUpperCase() : null;
+  }
+
   /** Fill color (6-hex, no '#') and any note/comment text for one cell,
    * read from a worksheet parsed with `cellStyles: true`. Used to turn a
    * hand-colour-coded "Результаты пролонгации" column back into structured
@@ -161,9 +189,7 @@ const ImportExport = (function () {
     if (!sheet || !colLetter || !rowRef) return { hex: null, comment: "", text: "" };
     const cell = sheet[colLetter + rowRef];
     if (!cell) return { hex: null, comment: "", text: "" };
-    let hex = null;
-    const fill = cell.s && (cell.s.fgColor || cell.s.bgColor);
-    if (fill && fill.rgb && /^[0-9A-Fa-f]{6,8}$/.test(fill.rgb)) hex = fill.rgb.slice(-6).toUpperCase();
+    const hex = cellFillHex(cell);
     const comment = cell.c && cell.c.length ? cell.c.map((c) => (c.t || "").trim()).filter(Boolean).join(" / ") : "";
     const text = cell.v == null ? "" : String(cell.v).trim();
     return { hex, comment, text };
