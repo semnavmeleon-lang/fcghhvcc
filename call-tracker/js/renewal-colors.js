@@ -112,11 +112,16 @@ const RenewalColors = (function () {
     return DB.getConfig("colorHexLegend", []);
   }
 
+  /** `meaning` is optional per choice — omitting it (as the import-time
+   * review panel does) keeps whatever free-text meaning was already saved
+   * for that exact hex, so a quick "just pick a status" during import never
+   * clobbers a meaning written earlier in Settings. */
   async function saveHexLegendChoices(choices) {
     const legend = await loadHexLegend();
-    choices.forEach(({ hex, statusId }) => {
+    choices.forEach(({ hex, statusId, meaning }) => {
       const idx = legend.findIndex((e) => e.hex === hex);
-      const entry = { hex, statusId: statusId || null };
+      const prev = idx !== -1 ? legend[idx] : null;
+      const entry = { hex, statusId: statusId || null, meaning: meaning !== undefined ? meaning : prev ? prev.meaning || "" : "" };
       if (idx !== -1) legend[idx] = entry;
       else legend.push(entry);
     });
@@ -224,9 +229,28 @@ const RenewalColors = (function () {
     yellow: "#ede07a",
   };
 
+  // Same 10 swatches as STANDARD_EXCEL_COLORS, offered as fixed choices when
+  // manually adding a colour rule in Settings — a free RGB picker there
+  // would make it easy to save a shade that just doesn't match any real
+  // cell in the workbook (matching an exact-colour rule needs the literal
+  // fill hex, not a similar-looking one).
+  const DEFAULT_PALETTE = [
+    { hex: "C00000", name: "Тёмно-красный" },
+    { hex: "FF0000", name: "Красный" },
+    { hex: "FFC000", name: "Оранжевый" },
+    { hex: "FFFF00", name: "Жёлтый" },
+    { hex: "92D050", name: "Светло-зелёный" },
+    { hex: "00B050", name: "Зелёный" },
+    { hex: "00B0F0", name: "Голубой" },
+    { hex: "0070C0", name: "Синий" },
+    { hex: "002060", name: "Тёмно-синий" },
+    { hex: "7030A0", name: "Фиолетовый" },
+  ];
+
   return {
     FAMILY_SEED,
     FAMILY_SWATCH,
+    DEFAULT_PALETTE,
     classifyColorFamily,
     loadFamilyLegend,
     saveFamilyLegend,

@@ -45,8 +45,14 @@ const Reminders = (function () {
     });
   }
 
+  /** Returns what actually happened, so the caller (Settings' "Проверить
+   * сейчас" button) can tell the user the truth instead of a status message
+   * that only checked "are there due clients" and called that "sent" even
+   * when reminders were off or permission was never granted — which made
+   * "nothing shows up" impossible to diagnose. */
   async function checkNow() {
-    if (!settings.enabled || permission() !== "granted") return;
+    if (!settings.enabled) return "disabled";
+    if (permission() !== "granted") return "no-permission";
     await ClientsStore.loadAll();
     const due = dueClients();
 
@@ -55,7 +61,7 @@ const Reminders = (function () {
         activeNotification.close();
         activeNotification = null;
       }
-      return;
+      return "no-due";
     }
 
     const mapping = await Schema.load();
@@ -64,20 +70,31 @@ const Reminders = (function () {
     let body = (due.length === 1 ? "Нужно перезвонить: " : `Нужно перезвонить (${due.length}): `) + names.join(", ");
     if (due.length > 3) body += ` и ещё ${due.length - 3}`;
 
-    // Same tag + renotify: each re-check re-alerts (sound/flash) instead of
-    // silently piling up a new toast per interval — annoying on purpose,
-    // but capped at one visible notification at a time.
-    activeNotification = new Notification("Учёт звонков — пора перезвонить", {
-      body,
-      tag: "call-tracker-due",
-      renotify: true,
-      requireInteraction: true,
-    });
-    activeNotification.onclick = () => {
-      window.focus();
-      if (onNotificationClick) onNotificationClick();
-      if (activeNotification) activeNotification.close();
-    };
+    try {
+      // Same tag + renotify: each re-check re-alerts (sound/flash) instead of
+      // silently piling up a new toast per interval — annoying on purpose,
+      // but capped at one visible notification at a time.
+      activeNotification = new Notification("Учёт звонков — пора перезвонить", {
+        body,
+        tag: "call-tracker-due",
+        renotify: true,
+        requireInteraction: true,
+      });
+      activeNotification.onclick = () => {
+        window.focus();
+        if (onNotificationClick) onNotificationClick();
+        if (activeNotification) activeNotification.close();
+      };
+      // If this fires, the browser accepted the call but the OS/its own
+      // notification pipe rejected it silently (e.g. system notifications
+      // disabled for the browser, Focus Assist) — the only such failure
+      // this API surfaces to the page at all.
+      activeNotification.onerror = () => console.error("Notification errored after being created — likely blocked at the OS/browser level, not by this app.");
+      return "shown";
+    } catch (err) {
+      console.error(err);
+      return "error";
+    }
   }
 
   function restart() {

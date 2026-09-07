@@ -134,7 +134,7 @@
             <div class="statuses-list" id="settings-statuses-list"></div>
             <div class="status-add-row">
               <input type="text" id="settings-status-new-label" placeholder="Новый статус, например «Оформил через агента»">
-              <input type="color" id="settings-status-new-color" value="#2a6fdb">
+              <div id="settings-status-new-color-picker"></div>
               <button class="btn" id="settings-status-add-btn">Добавить</button>
             </div>
           </div>
@@ -144,11 +144,12 @@
             <p class="panel-desc">
               При импорте таблицы со столбцом «Результаты пролонгации» цвет каждой ячейки автоматически превращается в
               статус звонка (дата — сегодняшняя), а текст/комментарий ячейки — в комментарий к звонку. Ниже — что
-              означает каждый цвет; можно изменить в любой момент.
+              означает каждый цвет; можно изменить в любой момент и вписать свой смысл.
             </p>
             <div class="color-legend-list" id="settings-color-family-list"></div>
             <p class="panel-desc" id="settings-color-hex-title" hidden>Отдельные цвета, распознанные вручную при импорте:</p>
             <div class="color-legend-list" id="settings-color-hex-list"></div>
+            <div class="color-legend-add" id="settings-color-add-form"></div>
           </div>
 
           <div class="card">

@@ -11,6 +11,60 @@ const ViewSettings = (function () {
     document.getElementById("settings-data-info").textContent = parts.join(" · ");
   }
 
+  /** Compact colour picker: a swatch button that toggles a small palette
+   * popover on click. Colours are fixed to RenewalColors.DEFAULT_PALETTE
+   * (the same 10 swatches used for the renewal-results legend) instead of
+   * a free `<input type="color">` — one consistent, recognizable set of
+   * colours across the whole app rather than arbitrary custom shades. */
+  function buildSwatchPicker(currentHex, onSelect) {
+    const wrap = document.createElement("div");
+    wrap.className = "swatch-picker-wrap";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "swatch-trigger";
+    trigger.style.background = currentHex;
+    trigger.title = "Выбрать цвет из палитры";
+
+    const panel = document.createElement("div");
+    panel.className = "color-swatch-picker swatch-picker-panel";
+    panel.hidden = true;
+    RenewalColors.DEFAULT_PALETTE.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "color-swatch-btn";
+      btn.style.background = "#" + c.hex;
+      btn.title = c.name;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        trigger.style.background = "#" + c.hex;
+        panel.hidden = true;
+        onSelect("#" + c.hex);
+      });
+      panel.appendChild(btn);
+    });
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.querySelectorAll(".swatch-picker-panel").forEach((p) => {
+        if (p !== panel) p.hidden = true;
+      });
+      panel.hidden = !panel.hidden;
+    });
+
+    wrap.append(trigger, panel);
+    return wrap;
+  }
+
+  let swatchPickersDocClickWired = false;
+  function wireSwatchPickerDismiss() {
+    if (swatchPickersDocClickWired) return;
+    swatchPickersDocClickWired = true;
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".swatch-picker-panel").forEach((p) => (p.hidden = true));
+    });
+  }
+
   async function renderStatuses() {
     const statusList = await Statuses.list();
     const calls = await DB.getAllCalls();
@@ -23,11 +77,8 @@ const ViewSettings = (function () {
       const row = document.createElement("div");
       row.className = "status-row";
 
-      const colorInput = document.createElement("input");
-      colorInput.type = "color";
-      colorInput.value = s.color;
-      colorInput.addEventListener("input", async () => {
-        s.color = colorInput.value;
+      const colorInput = buildSwatchPicker(s.color, async (hex) => {
+        s.color = hex;
         await Statuses.save(statusList);
         onNeedsFullRefresh();
       });
@@ -72,13 +123,17 @@ const ViewSettings = (function () {
   }
 
   function wireAddStatus() {
+    const pickerSlot = document.getElementById("settings-status-new-color-picker");
+    pickerSlot.innerHTML = "";
+    let newColor = "#" + RenewalColors.DEFAULT_PALETTE[0].hex;
+    pickerSlot.appendChild(buildSwatchPicker(newColor, (hex) => (newColor = hex)));
+
     document.getElementById("settings-status-add-btn").onclick = async () => {
       const labelInput = document.getElementById("settings-status-new-label");
-      const colorInput = document.getElementById("settings-status-new-color");
       const label = labelInput.value.trim();
       if (!label) return;
       const statusList = await Statuses.list();
-      statusList.push({ id: "s" + Utils.uid(), label, color: colorInput.value });
+      statusList.push({ id: "s" + Utils.uid(), label, color: newColor });
       await Statuses.save(statusList);
       labelInput.value = "";
       await renderStatuses();
@@ -102,6 +157,19 @@ const ViewSettings = (function () {
     return select;
   }
 
+  function buildMeaningInput(value, onSave) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "color-legend-meaning-input";
+    input.placeholder = "Свой смысл этого цвета...";
+    input.value = value || "";
+    input.addEventListener(
+      "change",
+      Utils.debounce(() => onSave(input.value.trim()), 200)
+    );
+    return input;
+  }
+
   async function renderColorLegend() {
     const statusList = await Statuses.list();
     const familyLegend = await RenewalColors.loadFamilyLegend();
@@ -123,9 +191,10 @@ const ViewSettings = (function () {
         entry.statusId = select.value || null;
         await RenewalColors.saveFamilyLegend(familyLegend);
       });
-      const meaning = document.createElement("span");
-      meaning.className = "color-legend-meaning";
-      meaning.textContent = entry.meaning || "";
+      const meaning = buildMeaningInput(entry.meaning, async (value) => {
+        entry.meaning = value;
+        await RenewalColors.saveFamilyLegend(familyLegend);
+      });
       row.append(swatch, label, select, meaning);
       familyListEl.appendChild(row);
     });
@@ -147,6 +216,9 @@ const ViewSettings = (function () {
       select.addEventListener("change", async () => {
         await RenewalColors.saveHexLegendChoices([{ hex: entry.hex, statusId: select.value }]);
       });
+      const meaning = buildMeaningInput(entry.meaning, async (value) => {
+        await RenewalColors.saveHexLegendChoices([{ hex: entry.hex, statusId: entry.statusId, meaning: value }]);
+      });
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "btn small danger";
@@ -156,9 +228,65 @@ const ViewSettings = (function () {
         await RenewalColors.deleteHexLegendEntry(entry.hex);
         await renderColorLegend();
       });
-      row.append(swatch, label, select, deleteBtn);
+      row.append(swatch, label, select, meaning, deleteBtn);
       hexListEl.appendChild(row);
     });
+
+    renderColorAddForm(statusList, hexLegend);
+  }
+
+  /** Manually add/overwrite a colour rule ahead of any import — e.g. you
+   * know you use dark blue for something but haven't imported a file with
+   * it yet. Colour choice is a fixed palette (Excel's own "Standard
+   * Colors"), not a free RGB picker: a rule only matches a cell whose fill
+   * is that *exact* hex, so a free picker would make it easy to save a
+   * shade that looks right but never actually matches anything. */
+  function renderColorAddForm(statusList, hexLegend) {
+    const formEl = document.getElementById("settings-color-add-form");
+    formEl.innerHTML = "";
+    const usedHexes = new Set(hexLegend.map((e) => e.hex));
+    let selectedHex = RenewalColors.DEFAULT_PALETTE.find((c) => !usedHexes.has(c.hex))?.hex || RenewalColors.DEFAULT_PALETTE[0].hex;
+
+    const title = document.createElement("div");
+    title.className = "color-legend-add-title";
+    title.textContent = "Добавить свой цвет:";
+
+    const swatchRow = document.createElement("div");
+    swatchRow.className = "color-swatch-picker";
+    const swatchButtons = [];
+    RenewalColors.DEFAULT_PALETTE.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "color-swatch-btn" + (c.hex === selectedHex ? " active" : "");
+      btn.style.background = "#" + c.hex;
+      btn.title = c.name + " (#" + c.hex + ")" + (usedHexes.has(c.hex) ? " — уже в легенде" : "");
+      btn.addEventListener("click", () => {
+        selectedHex = c.hex;
+        swatchButtons.forEach((b) => b.classList.toggle("active", b === btn));
+      });
+      swatchButtons.push(btn);
+      swatchRow.appendChild(btn);
+    });
+
+    const select = buildStatusSelect(statusList, null);
+    const meaningInput = document.createElement("input");
+    meaningInput.type = "text";
+    meaningInput.placeholder = "Свой смысл этого цвета (необязательно)...";
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "btn small";
+    addBtn.textContent = "Добавить";
+    addBtn.addEventListener("click", async () => {
+      await RenewalColors.saveHexLegendChoices([{ hex: selectedHex, statusId: select.value, meaning: meaningInput.value.trim() }]);
+      await renderColorLegend();
+    });
+
+    const controlsRow = document.createElement("div");
+    controlsRow.className = "color-legend-add-controls";
+    controlsRow.append(select, meaningInput, addBtn);
+
+    formEl.append(title, swatchRow, controlsRow);
   }
 
   async function renderTemplates() {
@@ -277,9 +405,23 @@ const ViewSettings = (function () {
     };
 
     checkNowBtn.onclick = async () => {
-      await Reminders.checkNow();
+      const result = await Reminders.checkNow();
       const due = Reminders.dueClients().length;
-      Utils.setStatus(statusEl, due ? `Просроченных перезвонов: ${due} — уведомление отправлено.` : "Просроченных перезвонов нет.", "info");
+      if (result === "disabled") {
+        Utils.setStatus(statusEl, "Сначала включите напоминания галочкой выше.", "error");
+      } else if (result === "no-permission") {
+        Utils.setStatus(statusEl, "Нет разрешения браузера на уведомления для этого сайта — разрешите и повторите.", "error");
+      } else if (result === "no-due") {
+        Utils.setStatus(statusEl, "Просроченных перезвонов нет.", "info");
+      } else if (result === "shown") {
+        Utils.setStatus(
+          statusEl,
+          `Просроченных перезвонов: ${due} — браузер принял уведомление. Если оно всё равно нигде не появилось, дело в настройках Windows/браузера (см. подсказку выше), а не в приложении.`,
+          "success"
+        );
+      } else {
+        Utils.setStatus(statusEl, "Браузер отказался показать уведомление (см. консоль браузера, F12).", "error");
+      }
     };
   }
 
@@ -355,6 +497,7 @@ const ViewSettings = (function () {
 
   async function show({ onRefreshAll, onReimport, onRemap }) {
     onNeedsFullRefresh = onRefreshAll;
+    wireSwatchPickerDismiss();
     const mapping = await Schema.load();
     renderDataInfo(mapping);
     await renderStatuses();

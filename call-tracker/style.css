@@ -260,10 +260,33 @@ input:focus, select:focus, textarea:focus {
 /* Settings: statuses */
 .statuses-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .status-row { display: flex; align-items: center; gap: 10px; }
-.status-row input[type="color"] { width: 34px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
 .status-row input[type="text"] { flex: 1; }
 .status-add-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .status-add-row input[type="text"] { flex: 1; min-width: 200px; }
+
+/* Fixed-palette colour picker: a swatch trigger + popover panel, used for
+   call-status colours and reused (in an always-open form) for the renewal
+   colour legend — see .color-swatch-picker below. */
+.swatch-picker-wrap { position: relative; flex-shrink: 0; }
+.swatch-trigger { width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.swatch-picker-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 8px; box-shadow: 0 4px 16px rgba(20, 22, 30, .15);
+}
+.color-swatch-picker { display: flex; flex-wrap: wrap; gap: 6px; max-width: 190px; }
+.color-swatch-btn { width: 26px; height: 26px; padding: 0; border: 2px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
+.color-swatch-btn:hover { border-color: var(--text-faint); }
+.color-swatch-btn.active { border-color: var(--text); }
+
+/* Settings: renewal colour legend */
+.color-legend-meaning-input { flex: 1; min-width: 160px; }
+.color-legend-add { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.color-legend-add-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.color-legend-add .color-swatch-picker { max-width: none; margin-bottom: 10px; }
+.color-legend-add-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.color-legend-add-controls select { min-width: 220px; }
+.color-legend-add-controls input[type="text"] { flex: 1; min-width: 180px; }
 
 .template-list, .history-list { display: flex; flex-direction: column; gap: 6px; }
 .template-row, .history-row { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); }
