@@ -113,6 +113,62 @@ const ImportExport = (function () {
     return "fnv:" + (h >>> 0).toString(16) + ":" + bytes.length;
   }
 
+  /** Walks a worksheet by hand instead of XLSX.utils.sheet_to_json, so a
+   * parsed row can be traced back to its original sheet row number
+   * (`rowRefs[i]`) — sheet_to_json's own blank-row skipping makes that
+   * correlation impossible to recover afterwards. That row number is what
+   * lets the renewal-results colour/comment lookup (RenewalColors) find the
+   * exact source cell for a given imported row later on. */
+  function walkSheet(sheet) {
+    const ref = sheet["!ref"];
+    if (!ref) return { headers: [], rows: [], rowRefs: [], headerColLetters: {} };
+    const range = XLSX.utils.decode_range(ref);
+    const headers = [];
+    const headerColLetters = {};
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c })];
+      const h = cell && cell.v !== undefined && cell.v !== "" ? String(cell.v) : `Столбец ${c - range.s.c + 1}`;
+      headers.push(h);
+      if (!(h in headerColLetters)) headerColLetters[h] = XLSX.utils.encode_col(c);
+    }
+    const rows = [];
+    const rowRefs = [];
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+      const rowObj = {};
+      let hasValue = false;
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+        const v = cell && cell.v !== undefined ? cell.v : "";
+        if (v !== "") hasValue = true;
+        rowObj[headers[c - range.s.c]] = v;
+      }
+      if (!hasValue) continue; // mirrors the old sheet_to_json({ blankrows: false }) behavior
+      rows.push(rowObj);
+      // Sheet cell keys ("E7") are 1-based, but `r` here is the 0-based row
+      // index decode_range/encode_cell use — off by one would silently
+      // point every colour/comment lookup at the row above, and drop the
+      // sheet's very last row from ever being looked up at all.
+      rowRefs.push(r + 1);
+    }
+    return { headers, rows, rowRefs, headerColLetters };
+  }
+
+  /** Fill color (6-hex, no '#') and any note/comment text for one cell,
+   * read from a worksheet parsed with `cellStyles: true`. Used to turn a
+   * hand-colour-coded "Результаты пролонгации" column back into structured
+   * call outcomes — see RenewalColors. */
+  function getCellInfo(sheet, colLetter, rowRef) {
+    if (!sheet || !colLetter || !rowRef) return { hex: null, comment: "", text: "" };
+    const cell = sheet[colLetter + rowRef];
+    if (!cell) return { hex: null, comment: "", text: "" };
+    let hex = null;
+    const fill = cell.s && (cell.s.fgColor || cell.s.bgColor);
+    if (fill && fill.rgb && /^[0-9A-Fa-f]{6,8}$/.test(fill.rgb)) hex = fill.rgb.slice(-6).toUpperCase();
+    const comment = cell.c && cell.c.length ? cell.c.map((c) => (c.t || "").trim()).filter(Boolean).join(" / ") : "";
+    const text = cell.v == null ? "" : String(cell.v).trim();
+    return { hex, comment, text };
+  }
+
   function readFile(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -121,19 +177,20 @@ const ImportExport = (function () {
           const bytes = new Uint8Array(reader.result);
           let headers;
           let rows;
+          let sheet = null;
+          let rowRefs = null;
+          let headerColLetters = null;
           if (isBinarySpreadsheet(bytes)) {
-            const wb = XLSX.read(bytes, { type: "array" });
+            const wb = XLSX.read(bytes, { type: "array", cellStyles: true });
             const sheetName = wb.SheetNames[0];
             if (!sheetName) throw new Error("В файле не найдено ни одного листа");
-            const sheet = wb.Sheets[sheetName];
-            const headerRow = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false })[0] || [];
-            headers = headerRow.map((h, i) => (h === undefined || h === "" ? `Столбец ${i + 1}` : String(h)));
-            rows = XLSX.utils.sheet_to_json(sheet, { defval: "", blankrows: false });
+            sheet = wb.Sheets[sheetName];
+            ({ headers, rows, rowRefs, headerColLetters } = walkSheet(sheet));
           } else {
             ({ headers, rows } = csvToHeadersRows(decodeCsvText(bytes)));
           }
           const hash = await hashBytes(bytes);
-          resolve({ headers, rows, fileName: file.name, fileSize: file.size, hash });
+          resolve({ headers, rows, fileName: file.name, fileSize: file.size, hash, sheet, rowRefs, headerColLetters });
         } catch (err) {
           reject(err);
         }
@@ -157,5 +214,5 @@ const ImportExport = (function () {
     XLSX.writeFile(wb, filename);
   }
 
-  return { readFile, exportClients, exportCalls };
+  return { readFile, getCellInfo, exportClients, exportCalls };
 })();

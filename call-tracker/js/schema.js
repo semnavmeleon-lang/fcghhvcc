@@ -12,6 +12,7 @@ const Schema = (function () {
     { id: "money", label: "Сумма", color: "#7a3fb0" },
     { id: "category", label: "Категория", color: "#0f8a8a" },
     { id: "renewal_check", label: "Пролонгация (предпроверка)", color: "#0d9488" },
+    { id: "renewal_result", label: "Результаты пролонгации (цвет/комментарий)", color: "#b91c1c" },
     { id: "text", label: "Текст", color: "#656c7a" },
     { id: "hidden", label: "Скрыть", color: "#98a0ae" },
   ];
@@ -39,6 +40,7 @@ const Schema = (function () {
     if (/фио|имя|клиент|страхователь|владелец|name/.test(h)) return "name";
     if (/дата|срок|период|date/.test(h)) return "date";
     if (/сумма|премия|стоимост|цена|price|₽|руб/.test(h)) return "money";
+    if (/результат.*(пролонгац|звонк|обзвон)|обзвон.*результат/i.test(h)) return "renewal_result";
     if (/пролонгац/i.test(h)) return "renewal_check";
     if (/вид|тип|продукт|полис|категор|osago|kasko|каско|осаго/i.test(h)) return "category";
     return "text";
@@ -70,6 +72,10 @@ const Schema = (function () {
 
   function renewalCheckColumn(mapping) {
     return mapping.find((m) => m.role === "renewal_check" && m.visible !== false);
+  }
+
+  function renewalResultColumn(mapping) {
+    return mapping.find((m) => m.role === "renewal_result" && m.visible !== false);
   }
 
   // --- Mapping templates: named, reusable column setups for a given file
@@ -128,6 +134,7 @@ const Schema = (function () {
     policyEndColumn,
     matchKeyColumn,
     renewalCheckColumn,
+    renewalResultColumn,
     listTemplates,
     saveTemplate,
     deleteTemplate,

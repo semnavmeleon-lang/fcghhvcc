@@ -102,6 +102,13 @@ const DB = (function () {
     return txDone(t);
   }
 
+  async function addCalls(calls) {
+    const t = await tx("calls", "readwrite");
+    const store = t.objectStore("calls");
+    calls.forEach((c) => store.put(c));
+    return txDone(t);
+  }
+
   async function deleteCall(id) {
     const t = await tx("calls", "readwrite");
     t.objectStore("calls").delete(id);
@@ -124,6 +131,7 @@ const DB = (function () {
     deleteClient,
     getAllCalls,
     addCall,
+    addCalls,
     deleteCall,
     clearAll,
   };

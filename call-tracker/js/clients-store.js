@@ -41,7 +41,11 @@ const ClientsStore = (function () {
 
   /** Imports parsed rows under the given mapping. Rows whose match-key value
    * equals an existing client's are merged into that client (data replaced,
-   * call history untouched); everything else becomes a new client. */
+   * call history untouched); everything else becomes a new client.
+   * `clientIds[i]` is the id the row at `rows[i]` ended up under (new or
+   * merged) — callers that need to attach something per source row (e.g.
+   * RenewalColors turning a coloured cell into a call record) zip against
+   * this rather than re-deriving the match themselves. */
   async function importRows(mapping, rows) {
     const matchCol = Schema.matchKeyColumn(mapping);
     const now = Date.now();
@@ -53,6 +57,7 @@ const ClientsStore = (function () {
       });
     }
     const toPut = [];
+    const clientIds = [];
     let created = 0;
     let updated = 0;
     for (const row of rows) {
@@ -67,17 +72,19 @@ const ClientsStore = (function () {
         existingClient.matchKey = matchKey;
         existingClient.updatedAt = now;
         toPut.push(existingClient);
+        clientIds.push(existingClient.id);
         updated++;
       } else {
         const client = { id: Utils.uid(), data, matchKey: matchKey || null, createdAt: now, updatedAt: now };
         toPut.push(client);
+        clientIds.push(client.id);
         if (matchKey) byMatch.set(matchKey, client);
         created++;
       }
     }
     await DB.putClients(toPut);
     await loadAll();
-    return { created, updated, total: rows.length };
+    return { created, updated, total: rows.length, clientIds };
   }
 
   async function updateClientData(clientId, data) {
@@ -90,7 +97,7 @@ const ClientsStore = (function () {
     await loadAll();
   }
 
-  async function logCall(clientId, { statusId, comment, nextCallAt, agent }) {
+  async function logCall(clientId, { statusId, comment, nextCallAt, agent, source, sourceKey }) {
     const call = {
       id: Utils.uid(),
       clientId,
@@ -100,6 +107,11 @@ const ClientsStore = (function () {
       nextCallAt: nextCallAt || null,
       agent: agent || "",
     };
+    // Only set on calls auto-generated from a coloured source column (see
+    // RenewalColors) — lets the UI mark them as such and lets a re-import
+    // of the same file recognize "already turned this cell into a call".
+    if (source) call.source = source;
+    if (sourceKey) call.sourceKey = sourceKey;
     await DB.addCall(call);
     // Reload rather than just invalidate(): callers (e.g. the client-card
     // modal) re-render their own view of this client/its calls immediately
@@ -107,6 +119,37 @@ const ClientsStore = (function () {
     // an invalidated-but-not-yet-refetched cache would render as empty.
     await loadAll();
     return call;
+  }
+
+  /** True if `clientId` already has a call tagged with this exact
+   * sourceKey — makes re-importing the same colour-coded file idempotent
+   * instead of piling up duplicate call records on every re-run. */
+  function hasCallWithSource(clientId, sourceKey) {
+    return callsFor(clientId).some((c) => c.sourceKey === sourceKey);
+  }
+
+  /** Bulk counterpart to logCall for writing many records at once (e.g. one
+   * per coloured cell in an imported column) — one transaction and one
+   * cache reload instead of one of each per record. */
+  async function logCallsBulk(entries) {
+    const now = Date.now();
+    const calls = entries.map((e) => {
+      const call = {
+        id: Utils.uid(),
+        clientId: e.clientId,
+        at: now,
+        statusId: e.statusId,
+        comment: e.comment || "",
+        nextCallAt: e.nextCallAt || null,
+        agent: e.agent || "",
+      };
+      if (e.source) call.source = e.source;
+      if (e.sourceKey) call.sourceKey = e.sourceKey;
+      return call;
+    });
+    await DB.addCalls(calls);
+    await loadAll();
+    return calls;
   }
 
   async function removeClient(clientId) {
@@ -130,5 +173,18 @@ const ClientsStore = (function () {
     await loadAll();
   }
 
-  return { loadAll, clients, callsFor, lastCallFor, importRows, updateClientData, logCall, updateCall, deleteCall, removeClient };
+  return {
+    loadAll,
+    clients,
+    callsFor,
+    lastCallFor,
+    importRows,
+    updateClientData,
+    logCall,
+    logCallsBulk,
+    hasCallWithSource,
+    updateCall,
+    deleteCall,
+    removeClient,
+  };
 })();

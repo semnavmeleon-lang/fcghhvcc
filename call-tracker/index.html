@@ -58,6 +58,8 @@
 
       <div class="mapping-columns-list" id="mapping-columns-list"></div>
 
+      <div class="color-review" id="mapping-color-review" hidden></div>
+
       <div class="actions">
         <button class="btn primary" id="mapping-import-btn">Импортировать</button>
         <button class="btn" id="mapping-save-template-btn">Сохранить как шаблон</button>
@@ -133,6 +135,18 @@
               <input type="color" id="settings-status-new-color" value="#2a6fdb">
               <button class="btn" id="settings-status-add-btn">Добавить</button>
             </div>
+          </div>
+
+          <div class="card">
+            <h3>Цветовая легенда результатов пролонгации</h3>
+            <p class="panel-desc">
+              При импорте таблицы со столбцом «Результаты пролонгации» цвет каждой ячейки автоматически превращается в
+              статус звонка (дата — сегодняшняя), а текст/комментарий ячейки — в комментарий к звонку. Ниже — что
+              означает каждый цвет; можно изменить в любой момент.
+            </p>
+            <div class="color-legend-list" id="settings-color-family-list"></div>
+            <p class="panel-desc" id="settings-color-hex-title" hidden>Отдельные цвета, распознанные вручную при импорте:</p>
+            <div class="color-legend-list" id="settings-color-hex-list"></div>
           </div>
 
           <div class="card">
@@ -231,6 +245,7 @@
 <script src="js/schema.js"></script>
 <script src="js/import-export.js"></script>
 <script src="js/import-history.js"></script>
+<script src="js/renewal-colors.js"></script>
 <script src="js/clients-store.js"></script>
 <script src="js/reminders.js"></script>
 <script src="js/view-onboarding.js"></script>

@@ -86,6 +86,81 @@ const ViewSettings = (function () {
     };
   }
 
+  function buildStatusSelect(statusList, selectedId) {
+    const select = document.createElement("select");
+    const skipOpt = document.createElement("option");
+    skipOpt.value = "";
+    skipOpt.textContent = "— пропустить (не создавать запись) —";
+    select.appendChild(skipOpt);
+    statusList.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = s.label;
+      if (s.id === selectedId) opt.selected = true;
+      select.appendChild(opt);
+    });
+    return select;
+  }
+
+  async function renderColorLegend() {
+    const statusList = await Statuses.list();
+    const familyLegend = await RenewalColors.loadFamilyLegend();
+    const hexLegend = await RenewalColors.loadHexLegend();
+
+    const familyListEl = document.getElementById("settings-color-family-list");
+    familyListEl.innerHTML = "";
+    familyLegend.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "color-legend-row";
+      const swatch = document.createElement("span");
+      swatch.className = "color-swatch";
+      swatch.style.background = RenewalColors.FAMILY_SWATCH[entry.family] || "#ccc";
+      const label = document.createElement("span");
+      label.className = "color-legend-label";
+      label.textContent = entry.label;
+      const select = buildStatusSelect(statusList, entry.statusId);
+      select.addEventListener("change", async () => {
+        entry.statusId = select.value || null;
+        await RenewalColors.saveFamilyLegend(familyLegend);
+      });
+      const meaning = document.createElement("span");
+      meaning.className = "color-legend-meaning";
+      meaning.textContent = entry.meaning || "";
+      row.append(swatch, label, select, meaning);
+      familyListEl.appendChild(row);
+    });
+
+    const hexTitle = document.getElementById("settings-color-hex-title");
+    const hexListEl = document.getElementById("settings-color-hex-list");
+    hexListEl.innerHTML = "";
+    hexTitle.hidden = hexLegend.length === 0;
+    hexLegend.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "color-legend-row";
+      const swatch = document.createElement("span");
+      swatch.className = "color-swatch";
+      swatch.style.background = "#" + entry.hex;
+      const label = document.createElement("span");
+      label.className = "color-legend-label";
+      label.textContent = "#" + entry.hex;
+      const select = buildStatusSelect(statusList, entry.statusId);
+      select.addEventListener("change", async () => {
+        await RenewalColors.saveHexLegendChoices([{ hex: entry.hex, statusId: select.value }]);
+      });
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "btn small danger";
+      deleteBtn.textContent = "Забыть";
+      deleteBtn.title = "Забыть это правило — при следующем импорте цвет снова попадёт в список нераспознанных";
+      deleteBtn.addEventListener("click", async () => {
+        await RenewalColors.deleteHexLegendEntry(entry.hex);
+        await renderColorLegend();
+      });
+      row.append(swatch, label, select, deleteBtn);
+      hexListEl.appendChild(row);
+    });
+  }
+
   async function renderTemplates() {
     const templates = await Schema.listTemplates();
     const listEl = document.getElementById("settings-templates-list");
@@ -279,6 +354,7 @@ const ViewSettings = (function () {
     const mapping = await Schema.load();
     renderDataInfo(mapping);
     await renderStatuses();
+    await renderColorLegend();
     await renderTemplates();
     await renderHistory();
     wireAddStatus();

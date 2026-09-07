@@ -22,6 +22,14 @@ const Utils = (function () {
       if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
       m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+      // A bare 5-digit number is almost always a stray Excel serial date
+      // that leaked into storage as plain text (e.g. an edited-and-resaved
+      // field that skipped formatting) rather than an actual numeric value
+      // someone typed — self-heals old records without a re-import.
+      if (/^\d{5}$/.test(s)) {
+        const n = +s;
+        if (n > 15000 && n < 80000) return new Date(Date.UTC(1899, 11, 30) + n * 86400000);
+      }
       const d = new Date(s);
       return isNaN(d) ? null : d;
     }

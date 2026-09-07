@@ -59,6 +59,8 @@
       rows: parsed.rows,
       existingMapping,
       duplicateInfo,
+      sheetMeta: { sheet: parsed.sheet, rowRefs: parsed.rowRefs, headerColLetters: parsed.headerColLetters },
+      fileHash: parsed.hash,
       onDone: async (result) => {
         if (result) {
           await ImportHistory.record({

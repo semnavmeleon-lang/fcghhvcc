@@ -17,7 +17,11 @@ const ViewClientModal = (function () {
     if (editing) {
       const input = document.createElement("input");
       input.type = "text";
-      input.value = value instanceof Date ? Utils.formatDate(value) : value == null ? "" : String(value);
+      // A "date" column's stored value is often a raw Excel serial number
+      // (e.g. 46054), not a Date instance — format it the same way the
+      // read-only view does, or the edit box shows a 5-digit number and,
+      // if saved untouched, permanently overwrites the real date with it.
+      input.value = col.role === "date" || value instanceof Date ? Utils.formatDate(value) : value == null ? "" : String(value);
       input.dataset.key = col.key;
       row.appendChild(input);
     } else {
@@ -62,7 +66,8 @@ const ViewClientModal = (function () {
     badge.textContent = status.label;
     const meta = document.createElement("span");
     meta.className = "call-entry-meta";
-    meta.textContent = Utils.formatDateTime(call.at) + (call.agent ? ` · ${call.agent}` : "");
+    meta.textContent =
+      Utils.formatDateTime(call.at) + (call.agent ? ` · ${call.agent}` : "") + (call.source === "color_import" ? " · из импорта таблицы" : "");
 
     const actions = document.createElement("span");
     actions.className = "call-entry-actions";

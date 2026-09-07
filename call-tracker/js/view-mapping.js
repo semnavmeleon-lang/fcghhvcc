@@ -3,6 +3,8 @@ const ViewMapping = (function () {
   let allRoles = [];
   let importRows = null; // null => "remap existing data" mode, no new rows
   let templates = [];
+  let sheetMeta = null; // { sheet, rowRefs, headerColLetters } — only set for a real xlsx/xls import
+  let fileHash = null;
 
   function buildInitialMapping(headers, existingMapping) {
     const byKey = new Map((existingMapping || []).map((m) => [m.key, m]));
@@ -148,6 +150,65 @@ const ViewMapping = (function () {
     refreshSelectOptions();
   }
 
+  /** Shown when the renewal-results column contains fill colours the family
+   * legend can't classify. Blocks completing the import until each one is
+   * assigned a meaning (or "skip") — the choice is remembered in the hex
+   * legend, so it never has to be made again for that exact colour. */
+  async function renderColorReview(unresolved, onContinue) {
+    const el = document.getElementById("mapping-color-review");
+    const statusList = await Statuses.list();
+    el.innerHTML = "";
+    el.hidden = false;
+
+    const title = document.createElement("div");
+    title.className = "color-review-title";
+    title.textContent = `Столбец «Результаты пролонгации»: ${unresolved.length} цвет(ов) не распознаны автоматически — укажите, что каждый значит.`;
+    el.appendChild(title);
+
+    const rowsEl = [];
+    unresolved.forEach((u) => {
+      const row = document.createElement("div");
+      row.className = "color-review-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "color-swatch";
+      swatch.style.background = "#" + u.hex;
+
+      const info = document.createElement("span");
+      info.className = "color-review-info";
+      info.textContent = `#${u.hex} · встречается: ${u.count}` + (u.sample ? ` · например: «${u.sample}»` : "");
+
+      const select = document.createElement("select");
+      const skipOpt = document.createElement("option");
+      skipOpt.value = "";
+      skipOpt.textContent = "— пропустить (не создавать запись) —";
+      select.appendChild(skipOpt);
+      statusList.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = s.label;
+        select.appendChild(opt);
+      });
+
+      row.append(swatch, info, select);
+      el.appendChild(row);
+      rowsEl.push({ hex: u.hex, select });
+    });
+
+    const continueBtn = document.createElement("button");
+    continueBtn.type = "button";
+    continueBtn.className = "btn primary";
+    continueBtn.textContent = "Сохранить значения цветов и продолжить импорт";
+    continueBtn.addEventListener("click", async () => {
+      const choices = rowsEl.map((r) => ({ hex: r.hex, statusId: r.select.value }));
+      await RenewalColors.saveHexLegendChoices(choices);
+      el.hidden = true;
+      el.innerHTML = "";
+      onContinue();
+    });
+    el.appendChild(continueBtn);
+  }
+
   function renderDuplicateWarning(duplicateInfo) {
     const el = document.getElementById("mapping-duplicate-warning");
     if (!duplicateInfo) {
@@ -159,11 +220,17 @@ const ViewMapping = (function () {
   }
 
   /** opts: { headers, rows (null for "edit mapping only", no re-import),
-   * existingMapping, duplicateInfo, onDone(result), onCancel() (omit to hide Cancel) } */
-  async function show({ headers, rows, existingMapping, duplicateInfo, onDone, onCancel }) {
+   * existingMapping, duplicateInfo, sheetMeta, fileHash, onDone(result),
+   * onCancel() (omit to hide Cancel) } */
+  async function show({ headers, rows, existingMapping, duplicateInfo, sheetMeta: meta, fileHash: hash, onDone, onCancel }) {
     importRows = rows || null;
+    sheetMeta = meta && meta.sheet ? meta : null;
+    fileHash = hash || null;
     allRoles = await Schema.getAllRoles();
     templates = await Schema.listTemplates();
+    const colorReviewEl = document.getElementById("mapping-color-review");
+    colorReviewEl.hidden = true;
+    colorReviewEl.innerHTML = "";
 
     const suggested = importRows ? Schema.findBestTemplate(templates, headers) : null;
     rowsState = buildInitialMapping(headers, existingMapping);
@@ -207,15 +274,33 @@ const ViewMapping = (function () {
       Utils.setStatus(statusEl, `Шаблон «${name.trim()}» сохранён.`, "success");
     };
 
-    importBtn.onclick = async () => {
+    async function doImport() {
       importBtn.disabled = true;
       try {
         let result = null;
         if (importRows) {
+          const resultCol = Schema.renewalResultColumn(rowsState);
+          if (resultCol && sheetMeta) {
+            const unresolved = await RenewalColors.findUnresolved(rowsState, importRows, sheetMeta);
+            if (unresolved.length) {
+              importBtn.disabled = false;
+              Utils.setStatus(statusEl, "", "");
+              await renderColorReview(unresolved, doImport);
+              return;
+            }
+          }
           Utils.setStatus(statusEl, "Импортирую...", "info");
           result = await ClientsStore.importRows(rowsState, importRows);
           await Schema.save(rowsState);
-          Utils.setStatus(statusEl, `Готово: новых клиентов — ${result.created}, обновлено — ${result.updated}.`, "success");
+          let message = `Готово: новых клиентов — ${result.created}, обновлено — ${result.updated}.`;
+          if (resultCol && sheetMeta) {
+            const colorSummary = await RenewalColors.applyToImportedClients(rowsState, importRows, sheetMeta, result.clientIds, fileHash);
+            if (colorSummary.logged) {
+              const parts = colorSummary.byStatus.map((s) => `${s.label} — ${s.count}`).join(", ");
+              message += ` Из столбца «${resultCol.label}» создано записей о звонках: ${colorSummary.logged} (${parts}).`;
+            }
+          }
+          Utils.setStatus(statusEl, message, "success");
         } else {
           await Schema.save(rowsState);
         }
@@ -226,7 +311,8 @@ const ViewMapping = (function () {
       } finally {
         importBtn.disabled = false;
       }
-    };
+    }
+    importBtn.onclick = doImport;
   }
 
   return { show };
