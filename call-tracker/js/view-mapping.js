@@ -1,0 +1,233 @@
+const ViewMapping = (function () {
+  let rowsState = [];
+  let allRoles = [];
+  let importRows = null; // null => "remap existing data" mode, no new rows
+  let templates = [];
+
+  function buildInitialMapping(headers, existingMapping) {
+    const byKey = new Map((existingMapping || []).map((m) => [m.key, m]));
+    return headers.map((header, i) => {
+      const prev = byKey.get(header);
+      if (prev) return { ...prev, order: i };
+      return {
+        key: header,
+        label: header,
+        role: Schema.guessRole(header),
+        visible: true,
+        order: i,
+        isMatchKey: false,
+        isPolicyEndDate: false,
+      };
+    });
+  }
+
+  function applyTemplate(template) {
+    if (!template) return;
+    const byKey = new Map(template.mapping.map((m) => [m.key, m]));
+    rowsState.forEach((col) => {
+      const t = byKey.get(col.key);
+      if (!t) return;
+      col.label = t.label;
+      col.role = t.role;
+      col.visible = t.visible;
+      col.isMatchKey = t.isMatchKey;
+      col.isPolicyEndDate = t.isPolicyEndDate;
+    });
+    renderColumns();
+    refreshSelectOptions();
+  }
+
+  function refreshSelectOptions() {
+    const keySelect = document.getElementById("mapping-keycol");
+    const endSelect = document.getElementById("mapping-enddate");
+    const prevKey = keySelect.value;
+    const prevEnd = endSelect.value;
+    keySelect.innerHTML = '<option value="">— не выбрано —</option>';
+    endSelect.innerHTML = '<option value="">— не выбрано —</option>';
+    rowsState
+      .filter((c) => c.visible !== false)
+      .forEach((c) => {
+        const o1 = document.createElement("option");
+        o1.value = c.key;
+        o1.textContent = c.label;
+        keySelect.appendChild(o1);
+        const o2 = document.createElement("option");
+        o2.value = c.key;
+        o2.textContent = c.label;
+        endSelect.appendChild(o2);
+      });
+    const matchCol = rowsState.find((c) => c.isMatchKey && c.visible !== false);
+    keySelect.value = matchCol ? matchCol.key : prevKey;
+    const endCol = rowsState.find((c) => c.isPolicyEndDate && c.visible !== false);
+    endSelect.value = endCol ? endCol.key : prevEnd;
+  }
+
+  function renderTemplateSelect() {
+    const select = document.getElementById("mapping-template-select");
+    select.innerHTML = '<option value="">— не применять —</option>';
+    templates.forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = `${t.name} (${t.mapping.length} столб.)`;
+      select.appendChild(opt);
+    });
+  }
+
+  function renderRoleStrip(stripEl, col) {
+    stripEl.innerHTML = "";
+    allRoles.forEach((role) => {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "role-pill" + (col.role === role.id ? " active" : "");
+      pill.textContent = role.label;
+      pill.style.setProperty("--pill-color", role.color);
+      pill.addEventListener("click", () => {
+        col.role = role.id;
+        stripEl.querySelectorAll(".role-pill").forEach((p) => p.classList.remove("active"));
+        pill.classList.add("active");
+      });
+      stripEl.appendChild(pill);
+    });
+
+    const addPill = document.createElement("button");
+    addPill.type = "button";
+    addPill.className = "role-pill add-role-pill";
+    addPill.textContent = "+ Своя роль";
+    addPill.addEventListener("click", async () => {
+      const name = prompt("Название новой роли, например «VIN» или «Ответственный агент»:");
+      if (!name || !name.trim()) return;
+      const role = await Schema.addCustomRole(name.trim());
+      allRoles = await Schema.getAllRoles();
+      col.role = role.id;
+      renderColumns(); // the new role must appear in every row's strip, not just this one
+    });
+    stripEl.appendChild(addPill);
+  }
+
+  function renderColumns() {
+    const list = document.getElementById("mapping-columns-list");
+    list.innerHTML = "";
+    rowsState.forEach((col) => {
+      const card = document.createElement("div");
+      card.className = "mapping-col-card" + (col.visible === false ? " disabled-card" : "");
+
+      const top = document.createElement("div");
+      top.className = "mapping-col-top";
+
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = col.visible !== false;
+      check.addEventListener("change", () => {
+        col.visible = check.checked;
+        card.classList.toggle("disabled-card", !check.checked);
+        refreshSelectOptions();
+      });
+
+      const labelInput = document.createElement("input");
+      labelInput.type = "text";
+      labelInput.value = col.label;
+      labelInput.addEventListener("input", () => {
+        col.label = labelInput.value;
+        refreshSelectOptions();
+      });
+
+      const keyNote = document.createElement("span");
+      keyNote.className = "mapping-col-key";
+      keyNote.textContent = `исходный столбец: «${col.key}»`;
+      keyNote.title = col.key;
+
+      top.append(check, labelInput, keyNote);
+
+      const strip = document.createElement("div");
+      strip.className = "role-strip";
+      renderRoleStrip(strip, col);
+
+      card.append(top, strip);
+      list.appendChild(card);
+    });
+    refreshSelectOptions();
+  }
+
+  function renderDuplicateWarning(duplicateInfo) {
+    const el = document.getElementById("mapping-duplicate-warning");
+    if (!duplicateInfo) {
+      Utils.setStatus(el, "", "");
+      return;
+    }
+    el.textContent = `Похоже, этот файл уже импортировался ${Utils.formatDateTime(duplicateInfo.at)} (тогда: новых — ${duplicateInfo.created}, обновлено — ${duplicateInfo.updated}). Можно импортировать повторно — записи с тем же ключом просто обновятся.`;
+    el.className = "status warn";
+  }
+
+  /** opts: { headers, rows (null for "edit mapping only", no re-import),
+   * existingMapping, duplicateInfo, onDone(result), onCancel() (omit to hide Cancel) } */
+  async function show({ headers, rows, existingMapping, duplicateInfo, onDone, onCancel }) {
+    importRows = rows || null;
+    allRoles = await Schema.getAllRoles();
+    templates = await Schema.listTemplates();
+
+    const suggested = importRows ? Schema.findBestTemplate(templates, headers) : null;
+    rowsState = buildInitialMapping(headers, existingMapping);
+    if (suggested) applyTemplate(suggested);
+
+    renderTemplateSelect();
+    document.getElementById("mapping-template-select").value = suggested ? suggested.id : "";
+    renderColumns();
+    renderDuplicateWarning(duplicateInfo);
+
+    const importBtn = document.getElementById("mapping-import-btn");
+    const cancelBtn = document.getElementById("mapping-cancel-btn");
+    const saveTemplateBtn = document.getElementById("mapping-save-template-btn");
+    const templateSelect = document.getElementById("mapping-template-select");
+    const statusEl = document.getElementById("mapping-status");
+    Utils.setStatus(statusEl, "", "");
+    importBtn.textContent = importRows ? "Импортировать" : "Сохранить";
+    cancelBtn.hidden = !onCancel;
+
+    const keySelect = document.getElementById("mapping-keycol");
+    const endSelect = document.getElementById("mapping-enddate");
+    keySelect.onchange = () => rowsState.forEach((c) => (c.isMatchKey = c.key === keySelect.value));
+    endSelect.onchange = () => rowsState.forEach((c) => (c.isPolicyEndDate = c.key === endSelect.value));
+    cancelBtn.onclick = () => {
+      if (onCancel) onCancel();
+    };
+
+    templateSelect.onchange = () => {
+      const t = templates.find((x) => x.id === templateSelect.value);
+      if (t) applyTemplate(t);
+    };
+
+    saveTemplateBtn.onclick = async () => {
+      const name = prompt("Название шаблона:", "");
+      if (!name || !name.trim()) return;
+      await Schema.saveTemplate(name.trim(), rowsState);
+      templates = await Schema.listTemplates();
+      renderTemplateSelect();
+      const saved = templates.find((t) => t.name === name.trim());
+      if (saved) templateSelect.value = saved.id;
+      Utils.setStatus(statusEl, `Шаблон «${name.trim()}» сохранён.`, "success");
+    };
+
+    importBtn.onclick = async () => {
+      importBtn.disabled = true;
+      try {
+        let result = null;
+        if (importRows) {
+          Utils.setStatus(statusEl, "Импортирую...", "info");
+          result = await ClientsStore.importRows(rowsState, importRows);
+          await Schema.save(rowsState);
+          Utils.setStatus(statusEl, `Готово: новых клиентов — ${result.created}, обновлено — ${result.updated}.`, "success");
+        } else {
+          await Schema.save(rowsState);
+        }
+        if (onDone) onDone(result);
+      } catch (err) {
+        console.error(err);
+        Utils.setStatus(statusEl, "Ошибка: " + err.message, "error");
+      } finally {
+        importBtn.disabled = false;
+      }
+    };
+  }
+
+  return { show };
+})();
